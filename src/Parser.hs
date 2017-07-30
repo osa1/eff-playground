@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase        #-}
@@ -14,208 +16,51 @@ import Data.Functor
 import Data.List
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (fromMaybe)
+import Data.Semigroup
 import qualified Data.Set as S
 import qualified Data.Text as T
 import Data.Void
 import Prelude hiding (lex)
+import Safe (lastMay)
 import Text.Megaparsec hiding (sepBy1)
-import Text.Megaparsec.Char hiding (satisfy, space)
-import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Show.Pretty (ppShow)
 --------------------------------------------------------------------------------
+import AST
+import Lexer (lex')
+import Token
+--------------------------------------------------------------------------------
 
-newtype Id = Id { idText :: T.Text }
-  deriving (Eq, Ord)
+parse' :: Parser a -> String -> a
+parse' p s =
+    case runParser p "" (lex' s) of
+      Left err -> error (show err)
+      Right a  -> a
 
-instance Show Id where
-  show = T.unpack . idText
-
--- instance Show Id where
---   show = ('\'' :) . T.unpack . idText
-
-mkId :: String -> Id
-mkId = Id . T.pack
-
--- | Value types
-data ValTy
-  -- | Constructor application
-  = DataTy Id [TyArg]
-  -- | Computation type
-  | CompTy_ CompTy
-  -- | Type variable
-  | VarTy Id
-  deriving (Show)
-
--- | Computation types
-data CompTy = CompTy
-  { compPorts :: [Port]
-  , compPeg   :: Peg
-  } deriving (Show)
-
-data TyArg
-  = ValTyArg ValTy
-  | AbilityTyArg [(Interface, [TyArg])]
-  deriving (Show)
-
-data Port = Port
-  { portAdjust :: [(Interface, [TyArg])]
-  , portType   :: ValTy
-  } deriving (Show)
-
-data Peg = Peg
-  { pegAbility :: [(Interface, [TyArg])]
-  , pegType    :: ValTy
-  } deriving (Show)
-
-type Interface = Id
+parsePrint :: Show a => Parser a -> String -> IO ()
+parsePrint p s = putStrLn (ppShow (parse' p s))
 
 --------------------------------------------------------------------------------
 
-data Decl
-  = ValDecl ValD
-  | IfaceDecl IfaceD
-  deriving (Show)
+type Parser = Parsec Void [TokPos]
 
-data ValD = ValD
-  { valId        :: Id
-  , valDeclType  :: ValTy
-  , valDeclValue :: Expr
-  } deriving (Show)
-
-data IfaceD = IfaceD
-  { ifaceId      :: Id
-  , ifaceTyBndrs :: [Id]
-  , ifaceCons    :: NonEmpty Con
-  } deriving (Show)
-
-data Con = Con
-  { conId   :: Id
-  , conArgs :: [ValTy]
-  } deriving (Show)
-
---------------------------------------------------------------------------------
-
-data Expr
-  = VarE Id
-  | AppE Expr [Expr]
-  | ConE Id
-  | SuspendE Comp
-  | LetE Id Expr Expr
-  | LetRecE [(Id, Comp)] Comp
-  | IntE Int
-  | TupE [Expr]
-  deriving (Show)
-
-type Comp = NonEmpty ([CompPat], Expr)
-
-data CompPat
-  = ValPat ValPat
-  | ReqPat Id [ValPat] Id -- cont
-  | WildCompPat Id
-  deriving (Show)
-
-data ValPat
-  = ConPat Id [ValPat]
-  | WildValPat Id
-  deriving (Show)
-
---------------------------------------------------------------------------------
-
-data Tok
-  = IdentTok Id
-  | ConIdentTok Id
-  | WildId Id
-  | StringTok T.Text
-  | IntTok Int
-  | Unit
-  | Comma
-  | Bang
-  | Arrow
-  | Equals
-  | Bar
-  | LBrace
-  | RBrace
-  | LBracket
-  | RBracket
-  | LAngle
-  | RAngle
-  | Colon
-  | LParen
-  | RParen
-  -- Keywords
-  | Interface
-  | Let
-  | LetRec
-  deriving (Show, Eq, Ord)
-
--- Parsing a String is probably faster than Text here, because of allocating
--- Text uncons.
-type Lexer = Parsec Void String
-
-space :: Lexer ()
-space = L.space space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
-
-lexeme :: Lexer a -> Lexer a
-lexeme = L.lexeme space
-
-lex :: Lexer [Tok]
-lex = do
-  ret <- some $ msum $ map lexeme
-    [ string "interface" $> Interface
-    , string "let" $> Let
-    , string "letrec" $> LetRec
-    , string "()" $> Unit
-    , IdentTok <$> lexIdent
-    , ConIdentTok <$> lexConIdent
-    , WildId <$> lexWildIdent
-    , StringTok . T.pack <$> (char '"' >> manyTill L.charLiteral (char '"'))
-    , IntTok . foldl' (\n c -> n * 10 + c) 0 <$> some L.decimal
-    , char ',' $> Comma
-    , char '!' $> Bang
-    , string "->" $> Arrow
-    , char '=' $> Equals
-    , char '|' $> Bar
-    , char '{' $> LBrace
-    , char '}' $> RBrace
-    , char '[' $> LBracket
-    , char ']' $> RBracket
-    , char '<' $> LAngle
-    , char '>' $> RAngle
-    , char ':' $> Colon
-    , char '(' $> LParen
-    , char ')' $> RParen
-    ]
-  eof
-  return ret
-
-lexIdent, lexConIdent, lexWildIdent :: Lexer Id
-
-lexIdent = do
-    c0 <- lowerChar
-    cs <- many alphaNumChar
-    return (mkId (c0 : cs))
-
-lexConIdent = do
-    c0 <- upperChar
-    cs <- many alphaNumChar
-    return (mkId (c0 : cs))
-
-lexWildIdent = char '_' >> fmap (mkId . ('_' :)) (many alphaNumChar)
-
---------------------------------------------------------------------------------
-
-type Parser = Parsec Void [Tok]
-
-instance Stream [Tok] where
-  type Token [Tok] = Tok
-  type Tokens [Tok] = [Tok]
+instance Stream [TokPos] where
+  type Token [TokPos] = TokPos
+  type Tokens [TokPos] = [TokPos]
   tokenToChunk _ = pure
   tokensToChunk _ = id
   chunkToTokens _ = id
   chunkLength _ = length
   chunkEmpty _ = null
-  advance1 _ _ p _ = p
-  advanceN _ _ p _ = p
+
+  advance1 _ _ _ (TokPos tok_ pos) =
+    pos{ sourceColumn = sourceColumn pos <> mkPos (tokLen tok_) }
+
+  advanceN _ _ pos0 toks =
+    case lastMay toks of
+      Nothing -> pos0
+      Just (TokPos tok_ pos) ->
+        pos{ sourceColumn = sourceColumn pos <> mkPos (tokLen tok_) }
+
   take1_ [] = Nothing
   take1_ (t:ts) = Just (t, ts)
   takeN_ n s
@@ -228,7 +73,7 @@ satisfy :: (Tok -> Maybe a) -> Parser a
 satisfy f = token testChar Nothing
   where
     testChar x =
-      case f x of
+      case f (_tok x) of
         Nothing -> Left (pure (Tokens (x:|[])), S.empty)
         Just x' -> Right x'
 
@@ -236,7 +81,7 @@ tok :: Tok -> Parser ()
 tok t = void (token testChar Nothing)
   where
     testChar x =
-      if t == x
+      if t == _tok x
         then Right ()
         else Left (pure (Tokens (x:|[])), S.empty)
 
@@ -430,11 +275,6 @@ pegTy = do
 
 sepBy1 :: Alternative m => m a -> m sep -> m (NonEmpty a)
 sepBy1 p sep = (:|) <$> p <*> many (sep *> p)
-
-parse' :: (Show e, Show (Token s), Show a) => Parsec e s a -> s -> IO ()
-parse' p s = case parse p "" s of
-               Left err -> error ("parse failed: " ++ show err)
-               Right a -> putStrLn (ppShow a)
 
 unsnoc :: [a] -> Maybe ([a], a)
 unsnoc []  = Nothing
