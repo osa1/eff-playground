@@ -1,0 +1,11 @@
+resolver: lts-9.0
+
+packages:
+- .
+
+extra-deps:
+- megaparsec-6.0.1
+
+flags: {}
+
+extra-package-dbs: []

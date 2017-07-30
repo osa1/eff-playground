@@ -1,0 +1,12 @@
+interface State s
+  = Get : s
+  | Put : s -> ()
+
+state : { s -> <State s>a -> a }
+  = { _ x -> x
+    | s <Get -> k> -> state s (k s)
+    | _ <Put s -> k> -> state s (k ())
+    }
+
+index : { List x -> List (Int, x) }
+  = { xs -> state 0 (map { x -> (next!, x) } xs) }
