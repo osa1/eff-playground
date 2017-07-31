@@ -42,6 +42,7 @@ data Tok
   | Interface
   | Let
   | LetRec
+  | In
   deriving (Show, Eq, Ord)
 
 data TokPos = TokPos
@@ -50,4 +51,28 @@ data TokPos = TokPos
   } deriving (Show, Eq, Ord)
 
 tokLen :: Tok -> Int
-tokLen = undefined
+tokLen t = case t of
+  IdentTok (Id i) -> T.length i
+  ConIdentTok (Id i) -> T.length i
+  WildId (Id i) -> T.length i
+  StringTok s -> T.length s + 2
+  IntTok i -> length (show i)
+  Unit -> 2
+  Comma -> 1
+  Bang -> 1
+  Arrow -> 2
+  Equals -> 1
+  Bar -> 1
+  LBrace -> 1
+  RBrace -> 1
+  LBracket -> 1
+  RBracket -> 1
+  LAngle -> 1
+  RAngle -> 1
+  Colon -> 1
+  LParen -> 1
+  RParen -> 1
+  Interface -> 9
+  Let -> 3
+  LetRec -> 6
+  In -> 2

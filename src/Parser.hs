@@ -143,20 +143,33 @@ exprNotApp = msum
     , satisfy (\case IntTok i -> Just (IntE i); _ -> Nothing)
     , satisfy (\case IdentTok t -> Just (VarE t); _ -> Nothing)
     , satisfy (\case ConIdentTok t -> Just (ConE t); _ -> Nothing)
-    , SuspendE <$>
-      between (tok LBrace) (tok RBrace)
-              (comp `sepBy1` tok Bar)
+    , SuspendE <$> comp
     , between (tok LParen) (tok RParen)
               (sepBy1 parseExpr (tok Comma) >>= \case
                 e :| [] -> return e
                 e :| es -> return (TupE (e : es)))
 
-    -- TODO: let
+    , let_
     -- TODO: letrec
     ]
 
-comp :: Parser ([CompPat], Expr)
-comp = do
+let_ :: Parser Expr
+let_ = do
+    tok Let
+    i <- satisfy (\case IdentTok t -> Just t; _ -> Nothing)
+    tok Colon
+    ty <- valTy
+    tok Equals
+    e1 <- parseExpr
+    tok In
+    e2 <- parseExpr
+    return (LetE i ty e1 e2)
+
+comp :: Parser Comp
+comp = between (tok LBrace) (tok RBrace) (comp1 `sepBy1` tok Bar)
+
+comp1 :: Parser ([CompPat], Expr)
+comp1 = do
     ps <- some pat
     tok Arrow
     e <- parseExpr

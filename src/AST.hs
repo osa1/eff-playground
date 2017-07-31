@@ -48,6 +48,7 @@ type Interface = Id
 data Decl
   = ValDecl ValD
   | IfaceDecl IfaceD
+  | DataDecl DataD
   deriving (Show)
 
 data ValD = ValD
@@ -60,6 +61,12 @@ data IfaceD = IfaceD
   { ifaceId      :: Id
   , ifaceTyBndrs :: [Id]
   , ifaceCons    :: NonEmpty Con
+  } deriving (Show)
+
+data DataD = DataD
+  { dataId      :: Id
+  , dataTyBndrs :: [Id]
+  , dataCons    :: NonEmpty Con
   } deriving (Show)
 
 data Con = Con
@@ -75,8 +82,8 @@ data Expr
   | AppE Expr [Expr]
   | ConE Id
   | SuspendE Comp
-  | LetE Id Expr Expr
-  | LetRecE [(Id, Comp)] Comp
+  | LetE Id ValTy Expr Expr
+  | LetRecE [(Id, ValTy, Comp)] Comp
   | IntE Int
   | TupE [Expr]
   deriving (Show)

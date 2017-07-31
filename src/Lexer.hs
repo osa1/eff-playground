@@ -49,6 +49,7 @@ lex = do
       [ string "interface" $> Interface
       , string "let" $> Let
       , string "letrec" $> LetRec
+      , string "in" $> In
       , string "()" $> Unit
       , IdentTok <$> lexIdent
       , ConIdentTok <$> lexConIdent
