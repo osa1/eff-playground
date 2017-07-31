@@ -47,6 +47,7 @@ lex :: Lexer [TokPos]
 lex = do
     ret <- some $ msum $ map lexeme
       [ string "interface" $> Interface
+      , string "data" $> Data
       , string "let" $> Let
       , string "letrec" $> LetRec
       , string "in" $> In

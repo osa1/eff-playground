@@ -100,6 +100,21 @@ parseIfaceDecl = do
       args <- valTy `sepBy` tok Arrow
       return (Con con_id args)
 
+parseDataDecl :: Parser DataD
+parseDataDecl = do
+    tok Data
+    n <- satisfy (\case ConIdentTok t -> Just t; _ -> Nothing)
+    ty_args <- many (satisfy (\case IdentTok t -> Just t; _ -> Nothing))
+    tok Equals
+    cons <- con `sepBy1` tok Bar
+    return (DataD n ty_args cons)
+  where
+    con = do
+      con_id <- satisfy (\case ConIdentTok t -> Just t; _ -> Nothing)
+      tok Colon
+      args <- valTy `sepBy` tok Arrow
+      return (Con con_id args)
+
 parseValDecl :: Parser ValD
 parseValDecl = do
     n <- satisfy (\case IdentTok t -> Just t; _ -> Nothing)

@@ -40,6 +40,7 @@ data Tok
   | RParen
   -- Keywords
   | Interface
+  | Data
   | Let
   | LetRec
   | In
@@ -73,6 +74,7 @@ tokLen t = case t of
   LParen -> 1
   RParen -> 1
   Interface -> 9
+  Data -> 4
   Let -> 3
   LetRec -> 6
   In -> 2
