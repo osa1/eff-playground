@@ -83,7 +83,7 @@ data Expr
   | ConE Id
   | SuspendE Comp
   | LetE Id ValTy Expr Expr
-  | LetRecE [(Id, ValTy, Comp)] Comp
+  | LetRecE [(Id, ValTy, Comp)] Expr
   | IntE Int
   | TupE [Expr]
   deriving (Show)

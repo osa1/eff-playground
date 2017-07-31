@@ -2,6 +2,15 @@ interface State s
   = Get : s
   | Put : s -> ()
 
+data List a
+  = Nil : List a
+  | Cons : a -> List a -> List a
+
+map : { {a -> b} -> List a -> List b }
+  = { f Nil -> Nil
+    | f (Cons x xs) -> Cons (f x) (map f xs)
+    }
+
 state : { s -> <State s>a -> a }
   = { _ x -> x
     | s <Get -> k> -> state s (k s)

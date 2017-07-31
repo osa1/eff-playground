@@ -192,7 +192,8 @@ comp1 = do
 
 pat :: Parser CompPat
 pat = msum
-    [ ValPat <$> valPat
+    [ between (tok LParen) (tok RParen) pat
+    , ValPat <$> valPat
     , between (tok LAngle)
               (tok RAngle)
               (msum [ satisfy (\case IdentTok t -> Just (WildCompPat t); _ -> Nothing)
