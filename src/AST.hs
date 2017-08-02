@@ -46,15 +46,15 @@ type Interface = Id
 -- * Declarations
 
 data Decl
-  = ValDecl ValD
+  = ValDecl (ValD ValTy Expr)
   | IfaceDecl IfaceD
   | DataDecl DataD
   deriving (Show)
 
-data ValD = ValD
+data ValD ty expr = ValD
   { valId        :: Id
-  , valDeclType  :: ValTy
-  , valDeclValue :: Expr
+  , valDeclType  :: ty
+  , valDeclValue :: expr
   } deriving (Show)
 
 data IfaceD = IfaceD

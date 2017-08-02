@@ -115,7 +115,7 @@ parseDataDecl = do
       args <- valTy `sepBy` tok Arrow
       return (Con con_id args)
 
-parseValDecl :: Parser ValD
+parseValDecl :: Parser (ValD ValTy Expr)
 parseValDecl = do
     n <- satisfy (\case IdentTok t -> Just t; _ -> Nothing)
     tok Colon

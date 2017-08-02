@@ -1,19 +1,21 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Eval where
 
 --------------------------------------------------------------------------------
-import AST
 import Data.List
-import qualified Data.List.NonEmpty as NE
-import Control.Monad
 import qualified Data.Map as M
-import qualified Data.Text as T
+import Data.Maybe
+--------------------------------------------------------------------------------
+import qualified AST
+import Core
 import Token
 --------------------------------------------------------------------------------
 
 data Ctx = Ctx
-  { valCtx   :: !(M.Map Id ValD)
-  , dataCtx  :: !(M.Map Id DataD)
-  , ifaceCtx :: !(M.Map Id IfaceD)
+  { valCtx   :: !(M.Map Id (AST.ValD ValTy Use))
+  , dataCtx  :: !(M.Map Id AST.DataD)
+  , ifaceCtx :: !(M.Map Id AST.IfaceD)
   }
 
 emptyCtx :: Ctx
@@ -23,6 +25,7 @@ emptyCtx = Ctx
   , ifaceCtx = M.empty
   }
 
+{-
 mkCtx :: [Decl] -> Ctx
 mkCtx = foldl' addDecl emptyCtx
 
@@ -30,88 +33,139 @@ addDecl :: Ctx -> Decl -> Ctx
 addDecl ctx (ValDecl v) = ctx{ valCtx = M.insert (valId v) v (valCtx ctx) }
 addDecl ctx (DataDecl d) = ctx{ dataCtx = M.insert (dataId d) d (dataCtx ctx) }
 addDecl ctx (IfaceDecl i) = ctx{ ifaceCtx = M.insert (ifaceId i) i (ifaceCtx ctx) }
+-}
 
 type Env = M.Map Id Val
 
 data Val
   = ConV Id [Val]
-  | SuspendV Comp
+  | LamV [Id] Constr
   | IntV Int
+  | ContV [Cont]
   deriving (Show)
 
-eval :: Ctx -> Env -> Expr -> Val
+data Cont
+  = C (Ctx -> Env -> Val -> Val)
+  | Handle [CmdAlt] Id Constr
+  | AppArgs [Constr]
+  | AppFn Env Val [Val] [Constr]
+  | ConAppArgs Id [Val] [Constr]
+  | Case [Alt]
+  | Bind Id Constr
 
-eval ctx env (VarE i) =
-    case M.lookup i env of
-      Just e  -> e
-      Nothing ->
-        case M.lookup i (valCtx ctx) of
-          Just d  -> eval ctx env (valDeclValue d)
-          Nothing -> error ("Unbound variable: " ++ show i)
+instance Show Cont where
+  show C{} = "C"
+  show Handle{} = "Handle"
+  show AppArgs{} = "AppArgs"
+  show AppFn{} = "AppFn"
+  show ConAppArgs{} = "ConAppArgs"
+  show Case{} = "Case"
+  show Bind{} = "Bind"
 
-eval ctx env (AppE e0 es0) =
-    let
-      e  = eval ctx env e0
-      es = map (eval ctx env) es0
-    in
-      case e of
-        SuspendV ps -> match ctx env (NE.toList ps) es
-        ConV c as -> ConV c (as ++ es)
-        IntV{} -> error ("Can't apply to " ++ show e)
+applyCont :: Ctx -> Env -> Val -> [Cont] -> Val
+applyCont ctx env v cs0 = case cs0 of
+    [] ->
+      v
+    C c : cs ->
+      applyCont ctx env (c ctx env v) cs
+    Handle _ x c : cs ->
+      evalC ctx (M.insert x v env) c cs
+    AppArgs [] : cs ->
+      apply ctx env v [] cs
+    AppArgs (a : as) : cs ->
+      evalC ctx env a (AppFn env v [] as : cs)
+    AppFn fn_env fn vs [] : cs ->
+      apply ctx fn_env fn (reverse vs) cs
+    AppFn fn_env fn vs (a : as) : cs ->
+      evalC ctx env a (AppFn fn_env fn (v : vs) as : cs)
+    ConAppArgs con vs [] : cs ->
+      applyCont ctx env (ConV con (reverse vs)) cs
+    ConAppArgs con vs (a : as) : cs ->
+      evalC ctx env a (ConAppArgs con (v : vs) as : cs)
+    Case alts : cs ->
+      selectAlt ctx env v alts cs
+    Bind x c : cs ->
+      evalC ctx (M.insert x v env) c cs
 
-eval _ _ (ConE c) = ConV c []
+selectAlt :: Ctx -> Env -> Val -> [Alt] -> [Cont] -> Val
+selectAlt ctx env v0 alts0 cs = go alts0
+  where
+    (con, args) = case v0 of
+      ConV con_ args_ -> (con_, args_)
+      _ -> error ("Can't scrutinize non-constructor: " ++ show v0)
 
-eval _ _ (SuspendE comp) = SuspendV comp
+    go [] = error "Non-exhaustive case"
+    go (Alt{altCon,altArgs,altRhs} : as) =
+      if altCon == con
+        then evalC ctx (M.fromList (zip altArgs args) `M.union` env) altRhs cs
+        else go as
 
-eval ctx env (LetE i _ e1_0 e2_0) =
-    let
-      e1 = eval ctx env e1_0
-    in
-      eval ctx (M.insert i e1 env) e2_0
+apply :: Ctx -> Env -> Val -> [Val] -> [Cont] -> Val
+apply ctx env fn as cs = case fn of
+    ConV i as0 ->
+      applyCont ctx env (ConV i (as0 ++ as)) cs
+    LamV as0 rhs ->
+      evalC ctx (M.fromList (zip as0 as) `M.union` env) rhs cs
+    IntV{} ->
+      error ("Can't apply to int: " ++ show fn)
+    ContV cs' ->
+      case as of
+        [a] -> applyCont ctx env a cs'
+        _   -> error ("Continuation application to " ++ show (length as) ++ " arguments")
 
-eval ctx env (LetRecE bndrs e_0) =
-    let
-      env' = M.fromList (map (\(i, _, c) -> (i, SuspendV c)) bndrs)
-               `M.union` env
-    in
-      eval ctx env' e_0
+applyCmd :: Ctx -> Env -> Id -> [Val] -> [Cont] -> [Cont] -> Val
+applyCmd ctx env cmd cmd_args cs0 acc = case cs0 of
+    [] ->
+      error ("Can't find handler for cmd: " ++ show cmd)
+    h@(Handle alts _ _) : cs ->
+      case findCmdAlt cmd alts of
+        Nothing ->
+          applyCmd ctx env cmd cmd_args cs (h : acc)
+        Just CmdAlt{cmdAltArgs,cmdAltCont,cmdAltRhs} ->
+          let
+            env' = M.insert cmdAltCont (ContV (reverse acc)) $
+                   M.union (M.fromList (zip cmdAltArgs cmd_args)) $
+                   env
+          in
+            evalC ctx env' cmdAltRhs cs
+    c : cs ->
+      applyCmd ctx env cmd cmd_args cs (c : acc)
 
-eval _ _ (IntE i) = IntV i
+findCmdAlt :: Id -> [CmdAlt] -> Maybe CmdAlt
+findCmdAlt cmd = find ((== cmd) . cmdAltCon)
 
-eval ctx env (TupE es_0) =
-    let
-      es = map (eval ctx env) es_0
-    in
-      ConV (Id (T.pack ('(' : replicate (length es) ',' ++ ")"))) es
+lookupVar :: Id -> Env -> Val
+lookupVar v e = fromMaybe (error ("Unbound variable: " ++ show v)) (M.lookup v e)
 
-match :: Ctx -> Env -> [([CompPat], Expr)] -> [Val] -> Val
-match _ _ [] vals = error ("match: out of patterns to match: " ++ show vals)
-match ctx env ((p, e) : ps) vals
-  | Just binds <- matchPats p vals
-  = eval ctx (binds `M.union` env) e
-  | otherwise
-  = match ctx env ps vals
+evalU :: Ctx -> Env -> Use -> [Cont] -> Val
+evalU ctx env u0 cs = case u0 of
+    MonoVarU v ->
+      applyCont ctx env (lookupVar v env) cs
+    PolyVarU v _ ->
+      applyCont ctx env (lookupVar v env) cs
+    CmdU i ->
+      applyCmd ctx env i [] cs []
+    AppU u as ->
+      evalU ctx env u (AppArgs as : cs)
+    ConstrU c _ ->
+      evalC ctx env c cs
 
-matchPats :: [CompPat] -> [Val] -> Maybe (M.Map Id Val)
-matchPats ps vs
-  | length ps == length vs
-  = M.fromList . concat <$> zipWithM matchOne ps vs
-  | otherwise
-  = Nothing
-
-matchOne :: CompPat -> Val -> Maybe [(Id, Val)]
-matchOne (ValPat val_pat) v = matchValPat val_pat v
-matchOne (ReqPat req_id ps k) v = undefined -- TODO: not sure how to implement this
-matchOne (WildCompPat i) v = undefined -- TODO: not sure what this is about
-
-matchValPat :: ValPat -> Val -> Maybe [(Id, Val)]
-
-matchValPat (ConPat con_id ps) v =
-    case v of
-      ConV con_id' as ->
-        if length ps == length as && con_id == con_id'
-          then fmap concat (zipWithM matchValPat ps as)
-          else Nothing
-      _ -> Nothing
-
-matchValPat (WildValPat i) val = Just [(i, val)]
+evalC :: Ctx -> Env -> Constr -> [Cont] -> Val
+evalC ctx env c0 cs = case c0 of
+    UseC u ->
+      evalU ctx env u cs
+    ConAppC con [] ->
+      applyCont ctx env (ConV con []) cs
+    ConAppC con (a : as) ->
+      evalC ctx env a (ConAppArgs con [] as : cs)
+    LamC args rhs ->
+      applyCont ctx env (LamV args rhs) cs
+    CaseC scrt alts ->
+      evalU ctx env scrt (Case alts : cs)
+    HandleC _ _ scrt alts tm_bndr tm_rhs ->
+      evalU ctx env scrt (Handle alts tm_bndr tm_rhs : cs)
+    LetC x _ c1 c2 ->
+      evalC ctx env c1 (Bind x c2 : cs)
+    LetRecC binds c ->
+      evalC ctx (M.fromList (map (\(i, _, args, rhs) -> (i, LamV args rhs)) binds)
+                  `M.union` env) c cs

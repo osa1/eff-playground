@@ -17,6 +17,8 @@ library
   hs-source-dirs:      src
   exposed-modules:
     AST
+    Core
+    Eval
     Lexer
     Parser
     Token
@@ -27,8 +29,10 @@ library
     megaparsec == 6.0.1,
     mtl,
     pretty-show,
+    RepLib,
     safe,
     text,
+    unbound,
     unordered-containers
 
   default-language:    Haskell2010
